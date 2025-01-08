@@ -1,17 +1,26 @@
 # HassOS-Actions
 
-本项目为自动云编译HassOS   
-每日凌晨编译最新的stable版本HassOS    
-提供树莓派系列和虚拟机镜像下载
+本项目为自动云编译HassOS官方稳定版，针对大陆地区网络进行优化，解决大陆地区无法正常安装和无法访问官方加载项商店的问题。   
+每周六凌晨自动编译最新的stable版本HassOS    
+提供Green，Yellow和树莓派系列以及虚拟机镜像下载
+
+# Home Assistant Green 优惠卷地址
+
+[Home Assistant Green 40元优惠卷](https://sumju.net/?p=7943)   
+[SkyConnect 20元优惠卷](https://sumju.net/?p=7943)  
 
 # 固件特点
 
 1. 增加HTOP和VIM，NANO命令。
-2. 更改固件系统时区为+8区（中国大陆地区）。
+2. 优化GitHub访问
+3. 大陆地区可正常启动并安装 （耗时大约半小时左右）
+4. 集成HACS-CHINA插件商店 （自行从设置-集成里搜索）
+5. 集成ItCommander加载项安装源
+6. 集成Zigbee2mqtt加载项安装源
 
 # 下载地址
 
-https://github.com/5high/HassOS-Actions/actions?query=workflow%3AHassOS-AutoBuild
+[大陆网络优化HassOS固件下载](https://pushfast.so169.com/5high/HassOS-Actions/releases)
 
 
 #

